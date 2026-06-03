@@ -143,10 +143,17 @@ class SupportBotRAG:
     def __init__(self) -> None:
         self.embedder = Embedder()
         self.client = chromadb.PersistentClient(path=str(DB_DIR))
+        self.collection = self._get_collection()
+
+    def _get_collection(self):
         self.collection = self.client.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
+        return self.collection
+
+    def _is_missing_collection_error(self, error: Exception) -> bool:
+        return error.__class__.__name__ == "NotFoundError" and "does not exist" in str(error)
 
     def build_index(self, reset: bool = False) -> int:
         if reset:
@@ -154,12 +161,15 @@ class SupportBotRAG:
                 self.client.delete_collection(COLLECTION_NAME)
             except ValueError:
                 pass
-            self.collection = self.client.get_or_create_collection(
-                name=COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-            )
+            self.collection = self._get_collection()
 
-        existing = self.collection.count()
+        try:
+            existing = self.collection.count()
+        except Exception as error:
+            if not self._is_missing_collection_error(error):
+                raise
+            self.collection = self._get_collection()
+            existing = self.collection.count()
         if existing:
             return existing
 
@@ -177,11 +187,22 @@ class SupportBotRAG:
     def retrieve(self, query: str, top_k: int = 5) -> list[Source]:
         self.build_index()
         query_embedding = self.embedder.embed([query])[0]
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-        )
+        try:
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as error:
+            if not self._is_missing_collection_error(error):
+                raise
+            self.collection = self._get_collection()
+            self.build_index()
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"],
+            )
 
         sources: list[Source] = []
         for text, metadata, distance in zip(
@@ -203,16 +224,17 @@ class SupportBotRAG:
 
     def answer(self, query: str, top_k: int = 5) -> dict[str, Any]:
         sources = self.retrieve(query, top_k=top_k)
-        if os.getenv("OPENAI_API_KEY"):
+        provider = os.getenv("LLM_PROVIDER", "auto").lower()
+        if provider in {"auto", "gemini"} and os.getenv("GEMINI_API_KEY"):
+            answer = self._answer_with_gemini(query, sources)
+        elif provider in {"auto", "openai"} and os.getenv("OPENAI_API_KEY"):
             answer = self._answer_with_openai(query, sources)
         else:
             answer = self._answer_without_llm(query, sources)
 
         return {"answer": answer, "sources": [source.__dict__ for source in sources]}
 
-    def _answer_with_openai(self, query: str, sources: list[Source]) -> str:
-        client = OpenAI()
-        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-5")
+    def _build_grounded_prompt(self, query: str, sources: list[Source]) -> str:
         context = "\n\n".join(
             f"[{source.source_id}] {source.title} ({source.source_type}, {source.category})\n{source.text}"
             for source in sources
@@ -232,11 +254,27 @@ class SupportBotRAG:
         Retrieved context:
         {context}
         """
+        return textwrap.dedent(prompt).strip()
+
+    def _answer_with_openai(self, query: str, sources: list[Source]) -> str:
+        client = OpenAI()
+        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-5")
         response = client.responses.create(
             model=model,
-            input=textwrap.dedent(prompt).strip(),
+            input=self._build_grounded_prompt(query, sources),
         )
         return response.output_text
+
+    def _answer_with_gemini(self, query: str, sources: list[Source]) -> str:
+        from google import genai
+
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        response = client.models.generate_content(
+            model=model,
+            contents=self._build_grounded_prompt(query, sources),
+        )
+        return response.text or "Gemini returned an empty response. Please retry or escalate."
 
     def _answer_without_llm(self, query: str, sources: list[Source]) -> str:
         if not sources:

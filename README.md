@@ -14,7 +14,7 @@ Recommended 48-hour prototype stack:
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Frontend | Streamlit | Fast to ship, clean chat UI, easy source side panel |
-| LLM | OpenAI Responses API | Current OpenAI text generation API for answer synthesis |
+| LLM | Gemini API or OpenAI Responses API | Fast API-backed answer synthesis with a provider switch |
 | Embeddings | `text-embedding-3-small` | Low-cost semantic retrieval for KB and tickets |
 | Vector DB | ChromaDB | Local persistent vector store, no external infra needed for demo |
 | Data cleaning | Pandas | Simple ticket export normalization and KB ingestion |
@@ -33,7 +33,7 @@ python rag_backend.py
 streamlit run streamlit_app.py
 ```
 
-Copy `.env.example` to `.env` and set `OPENAI_API_KEY` for LLM-generated answers. Without an API key, the demo still runs with local deterministic embeddings and an extractive fallback answer.
+Copy `.env.example` to `.env` and set either `GEMINI_API_KEY` or `OPENAI_API_KEY` for LLM-generated answers. Without an API key, the demo still runs with local deterministic embeddings and an extractive fallback answer.
 
 ```bash
 copy .env.example .env
@@ -45,6 +45,14 @@ To use OpenAI embeddings instead of local demo embeddings, set:
 USE_OPENAI_EMBEDDINGS=true
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_CHAT_MODEL=gpt-5
+```
+
+To use Gemini for answer generation, set:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ## 3. What The Demo Proves
