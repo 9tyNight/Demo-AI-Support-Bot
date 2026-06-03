@@ -8,7 +8,6 @@ from rag_backend import SupportBotRAG
 st.set_page_config(page_title="AI Support Bot Demo", page_icon="AI", layout="wide")
 
 
-@st.cache_resource
 def get_bot() -> SupportBotRAG:
     bot = SupportBotRAG()
     bot.build_index()

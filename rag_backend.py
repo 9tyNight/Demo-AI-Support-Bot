@@ -142,8 +142,11 @@ def load_documents() -> list[dict[str, Any]]:
 class SupportBotRAG:
     def __init__(self) -> None:
         self.embedder = Embedder()
-        self.client = chromadb.PersistentClient(path=str(DB_DIR))
+        self.client = self._new_client()
         self.collection = self._get_collection()
+
+    def _new_client(self):
+        return chromadb.PersistentClient(path=str(DB_DIR))
 
     def _get_collection(self):
         self.collection = self.client.get_or_create_collection(
@@ -153,7 +156,16 @@ class SupportBotRAG:
         return self.collection
 
     def _is_missing_collection_error(self, error: Exception) -> bool:
-        return error.__class__.__name__ == "NotFoundError" and "does not exist" in str(error)
+        message = str(error).lower()
+        return (
+            error.__class__.__name__ == "NotFoundError"
+            or "does not exist" in message
+            or "not found" in message
+        )
+
+    def _reconnect_collection(self):
+        self.client = self._new_client()
+        return self._get_collection()
 
     def build_index(self, reset: bool = False) -> int:
         if reset:
@@ -168,7 +180,7 @@ class SupportBotRAG:
         except Exception as error:
             if not self._is_missing_collection_error(error):
                 raise
-            self.collection = self._get_collection()
+            self.collection = self._reconnect_collection()
             existing = self.collection.count()
         if existing:
             return existing
@@ -196,7 +208,7 @@ class SupportBotRAG:
         except Exception as error:
             if not self._is_missing_collection_error(error):
                 raise
-            self.collection = self._get_collection()
+            self.collection = self._reconnect_collection()
             self.build_index()
             results = self.collection.query(
                 query_embeddings=[query_embedding],
