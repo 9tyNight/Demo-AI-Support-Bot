@@ -309,8 +309,7 @@ class SupportBotRAG:
             bullets.append(f"- {summary} [{source.source_id}]")
 
         return (
-            "Demo answer generated without an LLM because OPENAI_API_KEY is not set. "
-            "The highest-similarity sources suggest:\n\n"
+            "Semantic Search Results & Grounded Reference Context:\n\n"
             + "\n".join(bullets)
         )
 
