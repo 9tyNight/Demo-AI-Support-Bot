@@ -17,8 +17,9 @@ from sklearn.preprocessing import normalize
 
 load_dotenv()
 
-DATA_DIR = Path("data")
-DB_DIR = Path("chroma_db")
+IS_VERCEL = bool(os.getenv("VERCEL"))
+DATA_DIR = Path(os.getenv("SUPPORT_BOT_DATA_DIR", "/tmp/support_bot_data" if IS_VERCEL else "data"))
+DB_DIR = Path(os.getenv("CHROMA_DB_DIR", "/tmp/chroma_db" if IS_VERCEL else "chroma_db"))
 COLLECTION_NAME = "support_bot_sources"
 LOCAL_EMBED_DIM = 2048
 

@@ -55,6 +55,20 @@ GEMINI_API_KEY=your_key_here
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
+## Vercel Deployment
+
+This repo includes `app.py`, a Flask entrypoint for Vercel. Vercel's Python runtime expects a Flask `app` instance in an entrypoint such as `app.py`; the Streamlit app remains available for local demos.
+
+In Vercel, add these environment variables:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+Then redeploy from the `main` branch. The Vercel version uses the same RAG backend and mock data, but serves a small Flask/HTML chat UI instead of Streamlit.
+
 ## 3. What The Demo Proves
 
 - It ingests both KB articles and historical ticket exports, normalizes each into citation-ready source records, chunks them, embeds them, and stores them in ChromaDB.
