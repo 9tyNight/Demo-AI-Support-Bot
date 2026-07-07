@@ -1,0 +1,7 @@
+*.py
+requirements-*.txt
+requirements-streamlit.txt
+.env.example
+data/
+chroma_db/
+__pycache__/

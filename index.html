@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Support Bot Demo</title>
+  <meta
+    name="description"
+    content="Always-awake AI support bot demo showing grounded answers, retrieved sources, and escalation logic."
+  >
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #151b2c;
+      --muted: #667086;
+      --line: #d9e1ec;
+      --panel: #ffffff;
+      --soft: #f4f7fb;
+      --accent: #2454ff;
+      --good: #12734b;
+      --warn: #986b00;
+      --danger: #b8342c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #edf1f7;
+      color: var(--ink);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 24px clamp(18px, 5vw, 56px);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 44px);
+      line-height: 1.05;
+    }
+
+    header p {
+      max-width: 880px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .status-row,
+    .pill-row,
+    .quick-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border: 1px solid #d4dde9;
+      border-radius: 999px;
+      background: #fff;
+      color: #344256;
+      font-size: 13px;
+      padding: 4px 10px;
+      white-space: nowrap;
+    }
+
+    .pill.good {
+      color: var(--good);
+      border-color: #b7dcc8;
+      background: #eff9f3;
+    }
+
+    .pill.warn {
+      color: var(--warn);
+      border-color: #efd48d;
+      background: #fff8e7;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
+      gap: 18px;
+      padding: 18px clamp(18px, 5vw, 56px) 30px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .chat {
+      min-height: 72vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+    }
+
+    .workflow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcff;
+    }
+
+    .step {
+      min-height: 88px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      padding: 11px;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    #messages {
+      overflow-y: auto;
+      padding: 18px;
+    }
+
+    .message {
+      max-width: 860px;
+      margin-bottom: 14px;
+      padding: 13px 15px;
+      border-radius: 8px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .assistant {
+      border: 1px solid var(--line);
+      background: var(--soft);
+    }
+
+    .user {
+      margin-left: auto;
+      border: 1px solid #c7d6ff;
+      background: #eaf1ff;
+    }
+
+    .composer {
+      border-top: 1px solid var(--line);
+      padding: 14px;
+      background: #fff;
+    }
+
+    .quick-row {
+      margin-bottom: 10px;
+    }
+
+    .quick-row button {
+      min-height: 34px;
+      border: 1px solid #ccd6e4;
+      border-radius: 8px;
+      background: #fbfcff;
+      color: #273449;
+      cursor: pointer;
+      padding: 6px 10px;
+    }
+
+    form {
+      display: flex;
+      gap: 10px;
+    }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px 14px;
+      color: var(--ink);
+    }
+
+    form button {
+      min-width: 96px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .side {
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .side-section {
+      padding: 16px;
+    }
+
+    .side h2 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+
+    .side p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .source {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+      background: #fbfcff;
+    }
+
+    .source strong {
+      color: #1738ad;
+    }
+
+    .source-title {
+      margin: 5px 0 8px;
+      line-height: 1.35;
+    }
+
+    details {
+      margin-top: 8px;
+      color: #344256;
+      line-height: 1.45;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fbfcff;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 22px;
+    }
+
+    .note {
+      margin-top: 12px;
+      border-left: 3px solid var(--accent);
+      padding: 10px 12px;
+      background: #f5f7ff;
+      color: #344256;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .layout,
+      .workflow {
+        grid-template-columns: 1fr;
+      }
+
+      .chat {
+        min-height: 68vh;
+      }
+
+      form {
+        flex-direction: column;
+      }
+
+      form button {
+        min-height: 44px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="hero">
+        <div>
+          <h1>AI Support Bot Demo</h1>
+          <p>
+            A reliable, always-awake portfolio demo for a retrieval-first support assistant.
+            It shows KB and ticket ingestion, grounded answers, cited sources, and escalation behavior
+            without making reviewers wait for Streamlit to wake up.
+          </p>
+        </div>
+        <div class="status-row" aria-label="Demo status">
+          <span class="pill good">Static Vercel demo</span>
+          <span class="pill">RAG workflow proof</span>
+          <span class="pill warn">Mock support data</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel chat" aria-label="Support bot demo">
+        <div class="workflow" aria-label="Support automation workflow">
+          <div class="step"><strong>1. Ingest</strong><span>KB articles and historical support tickets are normalized into source records.</span></div>
+          <div class="step"><strong>2. Retrieve</strong><span>The bot selects the closest KB and ticket evidence for the customer question.</span></div>
+          <div class="step"><strong>3. Answer</strong><span>Responses include source IDs so the support team can audit every claim.</span></div>
+          <div class="step"><strong>4. Escalate</strong><span>Unsupported questions are routed to human support instead of invented answers.</span></div>
+        </div>
+
+        <div id="messages">
+          <div class="message assistant">
+            Ask about password resets, webhook delays, billing holds, CSV imports, API keys, analytics, mobile crashes, or try an unsupported warranty question.
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="quick-row" aria-label="Sample questions">
+            <button type="button" data-question="How should we help a customer whose password reset link expires immediately?">Password reset</button>
+            <button type="button" data-question="Why are webhook events delayed and how should we fix it?">Webhook delay</button>
+            <button type="button" data-question="Can you help with my coffee machine warranty?">Unsupported example</button>
+          </div>
+          <form id="chat-form">
+            <input id="query" autocomplete="off" placeholder="Ask a support question" required>
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </section>
+
+      <aside class="side" aria-label="Evidence and implementation notes">
+        <section class="panel side-section">
+          <h2>Retrieved Sources</h2>
+          <p id="source-note">Ask a question to see the exact KB and ticket evidence used.</p>
+          <div id="sources"></div>
+        </section>
+
+        <section class="panel side-section">
+          <h2>Demo Health</h2>
+          <p>This landing demo is static HTML on Vercel, so there is no Streamlit sleep screen and no cold backend required for first impression.</p>
+          <div class="metric-grid">
+            <div class="metric"><span>Load path</span><strong>Static</strong></div>
+            <div class="metric"><span>Wake wait</span><strong>0s</strong></div>
+            <div class="metric"><span>Fallback</span><strong>Handoff</strong></div>
+          </div>
+          <div class="note">
+            The repo still includes the Python RAG backend and Streamlit version for local technical review. This page is the public portfolio-safe entrypoint.
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const knowledge = [
+      {
+        keys: ["password", "reset", "expired", "link"],
+        answer:
+          "For password reset links that expire immediately, ask the customer to request a fresh reset link, confirm their account email, and check whether their browser or mail security tool is pre-opening links. If the issue repeats, invalidate existing reset tokens and escalate to support engineering. [KB-003] [TCK-1003]",
+        confidence: 0.91,
+        status: "Solved",
+        sources: [
+          {
+            id: "KB-003",
+            type: "KB article",
+            title: "Password reset links and token expiry",
+            category: "Account access",
+            text: "Reset links are single-use and can be consumed by mail scanners. Customers should request a new link and support can invalidate old tokens."
+          },
+          {
+            id: "TCK-1003",
+            type: "Historical ticket",
+            title: "Customer reset link expired on arrival",
+            category: "Account access",
+            text: "Agent resolved by confirming the email address, asking the user to generate a fresh link, and escalating repeated token failures."
+          }
+        ]
+      },
+      {
+        keys: ["webhook", "delay", "event", "events"],
+        answer:
+          "Webhook delays are usually caused by endpoint timeouts or retries backing up the delivery queue. Check the customer endpoint response time, replay failed events from the dashboard, and confirm their endpoint returns a 2xx quickly before doing slow work asynchronously. [KB-007] [TCK-1011]",
+        confidence: 0.87,
+        status: "Solved",
+        sources: [
+          {
+            id: "KB-007",
+            type: "KB article",
+            title: "Webhook retry and delivery troubleshooting",
+            category: "Integrations",
+            text: "Webhook receivers should acknowledge quickly with a 2xx response. Failed deliveries can be replayed after the endpoint is fixed."
+          },
+          {
+            id: "TCK-1011",
+            type: "Historical ticket",
+            title: "Delayed webhook events after endpoint timeout",
+            category: "Integrations",
+            text: "Support found the endpoint was taking more than 20 seconds. Moving processing to a background job restored normal delivery."
+          }
+        ]
+      },
+      {
+        keys: ["billing", "hold", "payment", "invoice"],
+        answer:
+          "For billing holds, verify the latest invoice status, ask the customer to update the payment method, then retry collection. If service access is blocked after payment succeeds, refresh account entitlements and escalate with the invoice ID. [KB-002] [TCK-1008]",
+        confidence: 0.84,
+        status: "Solved",
+        sources: [
+          {
+            id: "KB-002",
+            type: "KB article",
+            title: "Billing hold recovery steps",
+            category: "Billing",
+            text: "Payment failures place accounts on hold. Agents should confirm invoice status, update payment details, and refresh entitlements."
+          },
+          {
+            id: "TCK-1008",
+            type: "Historical ticket",
+            title: "Account remained blocked after invoice payment",
+            category: "Billing",
+            text: "Agent retried collection, refreshed entitlement cache, and restored access after confirming the paid invoice."
+          }
+        ]
+      },
+      {
+        keys: ["csv", "import", "columns", "upload"],
+        answer:
+          "CSV import failures usually come from missing required columns or unescaped commas. Have the customer download the current template, validate headers before upload, and retry with UTF-8 encoding. [KB-011] [TCK-1017]",
+        confidence: 0.8,
+        status: "Solved",
+        sources: [
+          {
+            id: "KB-011",
+            type: "KB article",
+            title: "CSV import validation checklist",
+            category: "Data import",
+            text: "Imports require the current column names, UTF-8 encoding, and quoted fields for values containing commas."
+          },
+          {
+            id: "TCK-1017",
+            type: "Historical ticket",
+            title: "CSV upload failed because template was outdated",
+            category: "Data import",
+            text: "Support solved the case by sending the latest template and asking the customer to remap two renamed columns."
+          }
+        ]
+      }
+    ];
+
+    const unsupported = {
+      answer:
+        "I do not have support evidence for that question in the indexed KB or ticket history. I would create a human handoff with the customer question, requested product area, and the missing source category instead of guessing.",
+      confidence: 0.26,
+      status: "Escalated",
+      sources: [
+        {
+          id: "HANDOFF-LOW-CONFIDENCE",
+          type: "Guardrail",
+          title: "Unsupported answer blocked",
+          category: "Human escalation",
+          text: "When the retrieved context is weak or unrelated, the bot should refuse to invent policy and route the issue to a human queue."
+        }
+      ]
+    };
+
+    const form = document.getElementById("chat-form");
+    const input = document.getElementById("query");
+    const messages = document.getElementById("messages");
+    const sources = document.getElementById("sources");
+    const sourceNote = document.getElementById("source-note");
+
+    function addMessage(role, text) {
+      const div = document.createElement("div");
+      div.className = `message ${role}`;
+      div.textContent = text;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function pickAnswer(query) {
+      const normalized = query.toLowerCase();
+      return knowledge.find((item) => item.keys.some((key) => normalized.includes(key))) || unsupported;
+    }
+
+    function renderSources(result) {
+      sources.innerHTML = "";
+      sourceNote.textContent = `${result.status}. Confidence ${Math.round(result.confidence * 100)}%.`;
+      result.sources.forEach((source) => {
+        const card = document.createElement("article");
+        card.className = "source";
+        card.innerHTML = `
+          <strong>${source.id}</strong>
+          <div class="source-title">${source.title}</div>
+          <div class="pill-row">
+            <span class="pill">${source.type}</span>
+            <span class="pill">${source.category}</span>
+          </div>
+          <details>
+            <summary>View evidence text</summary>
+            <p>${source.text}</p>
+          </details>
+        `;
+        sources.appendChild(card);
+      });
+    }
+
+    function answer(query) {
+      addMessage("user", query);
+      const result = pickAnswer(query);
+      addMessage("assistant", result.answer);
+      renderSources(result);
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+      input.value = "";
+      answer(query);
+    });
+
+    document.querySelectorAll("[data-question]").forEach((button) => {
+      button.addEventListener("click", () => answer(button.dataset.question));
+    });
+  </script>
+</body>
+</html>

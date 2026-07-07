@@ -1,5 +1,9 @@
 # AI Support Bot RAG Demo
 
+Live portfolio demo: https://demo-ai-support-bot.vercel.app
+
+This repo now uses a static Vercel landing demo as the public entrypoint so reviewers do not hit a Streamlit sleep/wake screen. The Streamlit app and Python RAG backend are still included for local technical review.
+
 This is a lightweight proof-of-concept for an AI support assistant that ingests two source types:
 
 - structured and unstructured knowledge base articles
@@ -13,7 +17,7 @@ Recommended 48-hour prototype stack:
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Frontend | Flask/HTML on Vercel, Streamlit locally | Fast public demo link plus a richer local chat UI |
+| Frontend | Static HTML on Vercel, Flask/Streamlit locally | Reliable public demo link plus richer local technical review |
 | LLM | Gemini API or OpenAI Responses API | Optional API-backed answer synthesis with a provider switch |
 | Embeddings | Local hashed vectors, optional `text-embedding-3-small` | Lightweight retrieval that works without external services |
 | Retrieval | In-memory cosine search | Keeps the Vercel demo small and reliable |
@@ -27,7 +31,7 @@ For a production MVP, this can evolve to managed Pinecone/Qdrant/Chroma, schedul
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-local.txt
 pip install -r requirements-streamlit.txt
 python generate_sample_data.py
 python rag_backend.py
@@ -58,13 +62,13 @@ GEMINI_MODEL=gemini-2.5-flash
 
 ## Vercel Deployment
 
-This repo includes `app.py`, a Flask entrypoint for Vercel. Vercel's Python runtime expects a Flask `app` instance in an entrypoint such as `app.py`; the Streamlit app remains available for local demos.
+This repo includes `index.html`, an always-awake static landing/demo for Vercel. It shows the support automation workflow, canned grounded answers, retrieved source cards, and an unsupported-answer handoff example without requiring Streamlit or a Python server to wake up.
 
 Live demo: https://demo-ai-support-bot.vercel.app
 
-The Vercel deployment uses the Flask UI and the same lightweight RAG backend. Streamlit is kept in `requirements-streamlit.txt` so the serverless bundle stays small.
+The Vercel deployment is intentionally static for first-impression reliability. `.vercelignore` excludes the local Python files from production deploys, while `flask_app.py`, `rag_backend.py`, and `streamlit_app.py` remain in the repo to show the deeper Python RAG implementation and can be run locally.
 
-In Vercel, add these environment variables:
+For the local Flask or Streamlit RAG version, add these environment variables:
 
 ```env
 LLM_PROVIDER=gemini
@@ -72,7 +76,7 @@ GEMINI_API_KEY=your_key_here
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
-Then redeploy from the `main` branch. The Vercel version uses the same RAG backend and mock data, but serves a small Flask/HTML chat UI instead of Streamlit.
+Then run the local version. The public Vercel page does not need API keys.
 
 ## 3. What The Demo Proves
 
@@ -90,6 +94,9 @@ Then redeploy from the `main` branch. The Vercel version uses the same RAG backe
 
 - `generate_sample_data.py`: creates mock support ticket and KB CSVs
 - `rag_backend.py`: chunks, embeds, indexes, retrieves, and answers with citations
-- `streamlit_app.py`: chat UI with source panel and expandable evidence
-- `app.py`: Flask/Vercel chat UI for the public demo
+- `index.html`: static Vercel landing/demo that avoids Streamlit sleep screens
+- `streamlit_app.py`: local chat UI with source panel and expandable evidence
+- `flask_app.py`: optional Flask chat UI for local/serverless experiments
+- `requirements-local.txt`: Python dependencies for local RAG and Flask review
+- `.vercelignore`: keeps the public Vercel deploy static and always awake
 - `.env.example`: configuration template
