@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import csv
+import os
 from pathlib import Path
 
-import pandas as pd
 
-
-DATA_DIR = Path("data")
+DATA_DIR = Path(os.getenv("SUPPORT_BOT_DATA_DIR", "data"))
 
 
 SUPPORT_TICKETS = [
@@ -102,14 +102,19 @@ KB_ARTICLES = [
 
 def main() -> None:
     DATA_DIR.mkdir(exist_ok=True)
-    tickets = pd.DataFrame(SUPPORT_TICKETS)
-    articles = pd.DataFrame(KB_ARTICLES)
 
-    tickets.to_csv(DATA_DIR / "support_tickets.csv", index=False)
-    articles.to_csv(DATA_DIR / "kb_articles.csv", index=False)
+    with (DATA_DIR / "support_tickets.csv").open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=SUPPORT_TICKETS[0].keys())
+        writer.writeheader()
+        writer.writerows(SUPPORT_TICKETS)
 
-    print(f"Wrote {len(tickets)} support tickets to {DATA_DIR / 'support_tickets.csv'}")
-    print(f"Wrote {len(articles)} KB articles to {DATA_DIR / 'kb_articles.csv'}")
+    with (DATA_DIR / "kb_articles.csv").open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=KB_ARTICLES[0].keys())
+        writer.writeheader()
+        writer.writerows(KB_ARTICLES)
+
+    print(f"Wrote {len(SUPPORT_TICKETS)} support tickets to {DATA_DIR / 'support_tickets.csv'}")
+    print(f"Wrote {len(KB_ARTICLES)} KB articles to {DATA_DIR / 'kb_articles.csv'}")
 
 
 if __name__ == "__main__":

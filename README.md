@@ -13,14 +13,14 @@ Recommended 48-hour prototype stack:
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Frontend | Streamlit | Fast to ship, clean chat UI, easy source side panel |
-| LLM | Gemini API or OpenAI Responses API | Fast API-backed answer synthesis with a provider switch |
-| Embeddings | `text-embedding-3-small` | Low-cost semantic retrieval for KB and tickets |
-| Vector DB | ChromaDB | Local persistent vector store, no external infra needed for demo |
-| Data cleaning | Pandas | Simple ticket export normalization and KB ingestion |
-| Deployment | Streamlit Community Cloud, Hugging Face Spaces, or small VPS | Quick client demo link |
+| Frontend | Flask/HTML on Vercel, Streamlit locally | Fast public demo link plus a richer local chat UI |
+| LLM | Gemini API or OpenAI Responses API | Optional API-backed answer synthesis with a provider switch |
+| Embeddings | Local hashed vectors, optional `text-embedding-3-small` | Lightweight retrieval that works without external services |
+| Retrieval | In-memory cosine search | Keeps the Vercel demo small and reliable |
+| Data cleaning | Python CSV utilities | No heavy data dependency needed for the mock support exports |
+| Deployment | Vercel | Quick client demo link |
 
-For a production MVP, this can evolve to managed Pinecone/Qdrant, scheduled ingestion, role-based access control, analytics, ticket deflection tracking, and human handoff.
+For a production MVP, this can evolve to managed Pinecone/Qdrant/Chroma, scheduled ingestion, role-based access control, analytics, ticket deflection tracking, and human handoff.
 
 ## 2. Quick Start
 
@@ -28,6 +28,7 @@ For a production MVP, this can evolve to managed Pinecone/Qdrant, scheduled inge
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-streamlit.txt
 python generate_sample_data.py
 python rag_backend.py
 streamlit run streamlit_app.py
@@ -59,6 +60,10 @@ GEMINI_MODEL=gemini-2.5-flash
 
 This repo includes `app.py`, a Flask entrypoint for Vercel. Vercel's Python runtime expects a Flask `app` instance in an entrypoint such as `app.py`; the Streamlit app remains available for local demos.
 
+Live demo: https://demo-ai-support-bot.vercel.app
+
+The Vercel deployment uses the Flask UI and the same lightweight RAG backend. Streamlit is kept in `requirements-streamlit.txt` so the serverless bundle stays small.
+
 In Vercel, add these environment variables:
 
 ```env
@@ -71,7 +76,7 @@ Then redeploy from the `main` branch. The Vercel version uses the same RAG backe
 
 ## 3. What The Demo Proves
 
-- It ingests both KB articles and historical ticket exports, normalizes each into citation-ready source records, chunks them, embeds them, and stores them in ChromaDB.
+- It ingests both KB articles and historical ticket exports, normalizes each into citation-ready source records, chunks them, embeds them, and retrieves them with in-memory vector search.
 - It performs RAG retrieval over both source types and prompts the LLM to answer only from retrieved context with mandatory source IDs.
 - It provides a clean chat interface where the answer and the underlying sources are visible together, making hallucination control tangible for the client.
 
@@ -83,7 +88,8 @@ Then redeploy from the `main` branch. The Vercel version uses the same RAG backe
 
 ## 5. File Map
 
-- `generate_sample_data.py`: creates mock support ticket and KB CSVs with Pandas
+- `generate_sample_data.py`: creates mock support ticket and KB CSVs
 - `rag_backend.py`: chunks, embeds, indexes, retrieves, and answers with citations
 - `streamlit_app.py`: chat UI with source panel and expandable evidence
+- `app.py`: Flask/Vercel chat UI for the public demo
 - `.env.example`: configuration template

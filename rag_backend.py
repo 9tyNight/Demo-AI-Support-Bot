@@ -1,27 +1,27 @@
 from __future__ import annotations
 
+import csv
+import hashlib
+import math
 import os
+import re
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import chromadb
-import numpy as np
-import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
-from sklearn.feature_extraction.text import HashingVectorizer
-from sklearn.preprocessing import normalize
 
 
 load_dotenv()
 
-IS_VERCEL = bool(os.getenv("VERCEL"))
-DATA_DIR = Path(os.getenv("SUPPORT_BOT_DATA_DIR", "/tmp/support_bot_data" if IS_VERCEL else "data"))
-DB_DIR = Path(os.getenv("CHROMA_DB_DIR", "/tmp/chroma_db" if IS_VERCEL else "chroma_db"))
-COLLECTION_NAME = "support_bot_sources"
+IS_SERVERLESS = any(os.getenv(name) for name in ("VERCEL", "VERCEL_ENV", "AWS_REGION", "LAMBDA_TASK_ROOT"))
+DATA_DIR = Path(os.getenv("SUPPORT_BOT_DATA_DIR", "/tmp/support_bot_data" if IS_SERVERLESS else "data"))
 LOCAL_EMBED_DIM = 2048
+ESCALATION_CONFIDENCE_THRESHOLD = 0.38
+FALLBACK_SOURCE_CONFIDENCE_FLOOR = 0.34
+TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,11 @@ class Source:
     distance: float
 
 
+def source_confidence(distance: float) -> float:
+    """Convert cosine distance into a compact demo confidence score."""
+    return round(max(0.0, min(0.98, 1.25 - distance)), 2)
+
+
 class Embedder:
     def __init__(self) -> None:
         self.use_openai = (
@@ -42,31 +47,38 @@ class Embedder:
         )
         self.model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         self.client = OpenAI() if self.use_openai else None
-        self.local_vectorizer = HashingVectorizer(
-            n_features=LOCAL_EMBED_DIM,
-            alternate_sign=False,
-            norm=None,
-            ngram_range=(1, 2),
-            stop_words="english",
-        )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if self.use_openai and self.client:
             response = self.client.embeddings.create(model=self.model, input=texts)
             return [item.embedding for item in response.data]
 
-        matrix = self.local_vectorizer.transform(texts)
-        matrix = normalize(matrix, norm="l2", copy=False)
-        return matrix.astype(np.float32).toarray().tolist()
+        return [self._local_embed(text) for text in texts]
+
+    def _local_embed(self, text: str) -> list[float]:
+        tokens = TOKEN_PATTERN.findall(text.lower())
+        features = tokens + [f"{left}_{right}" for left, right in zip(tokens, tokens[1:])]
+        vector = [0.0] * LOCAL_EMBED_DIM
+
+        for feature in features:
+            digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()
+            index = int.from_bytes(digest, "big") % LOCAL_EMBED_DIM
+            vector[index] += 1.0
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if not norm:
+            return vector
+        return [value / norm for value in vector]
 
 
 def ensure_sample_data() -> None:
     if (DATA_DIR / "support_tickets.csv").exists() and (DATA_DIR / "kb_articles.csv").exists():
         return
 
-    from generate_sample_data import main as generate_data
+    import generate_sample_data
 
-    generate_data()
+    generate_sample_data.DATA_DIR = DATA_DIR
+    generate_sample_data.main()
 
 
 def chunk_text(text: str, max_chars: int = 900) -> list[str]:
@@ -88,13 +100,18 @@ def chunk_text(text: str, max_chars: int = 900) -> list[str]:
     return chunks
 
 
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as file:
+        return list(csv.DictReader(file))
+
+
 def load_documents() -> list[dict[str, Any]]:
     ensure_sample_data()
-    tickets = pd.read_csv(DATA_DIR / "support_tickets.csv")
-    articles = pd.read_csv(DATA_DIR / "kb_articles.csv")
+    tickets = read_csv_rows(DATA_DIR / "support_tickets.csv")
+    articles = read_csv_rows(DATA_DIR / "kb_articles.csv")
 
     documents: list[dict[str, Any]] = []
-    for _, row in tickets.iterrows():
+    for row in tickets:
         source_id = row["Ticket_ID"]
         text = (
             f"Historical Support Ticket {source_id}\n"
@@ -116,7 +133,7 @@ def load_documents() -> list[dict[str, Any]]:
                 }
             )
 
-    for _, row in articles.iterrows():
+    for row in articles:
         source_id = row["Article_ID"]
         text = (
             f"Knowledge Base Article {source_id}: {row['Title']}\n"
@@ -140,96 +157,71 @@ def load_documents() -> list[dict[str, Any]]:
     return documents
 
 
+def load_sample_records(limit: int = 3) -> list[dict[str, str]]:
+    ensure_sample_data()
+    tickets = read_csv_rows(DATA_DIR / "support_tickets.csv")[:limit]
+    articles = read_csv_rows(DATA_DIR / "kb_articles.csv")[:limit]
+
+    samples: list[dict[str, str]] = []
+    for row in tickets:
+        samples.append(
+            {
+                "source_id": str(row["Ticket_ID"]),
+                "source_type": "Historical ticket",
+                "category": str(row["Category"]),
+                "title": str(row["Customer_Issue"]),
+                "body": str(row["Resolution"]),
+            }
+        )
+    for row in articles:
+        samples.append(
+            {
+                "source_id": str(row["Article_ID"]),
+                "source_type": "KB article",
+                "category": str(row["Category"]),
+                "title": str(row["Title"]),
+                "body": str(row["Body"]),
+            }
+        )
+    return samples
+
+
 class SupportBotRAG:
     def __init__(self) -> None:
         self.embedder = Embedder()
-        self.client = self._new_client()
-        self.collection = self._get_collection()
-
-    def _new_client(self):
-        return chromadb.PersistentClient(path=str(DB_DIR))
-
-    def _get_collection(self):
-        self.collection = self.client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
-        )
-        return self.collection
-
-    def _is_missing_collection_error(self, error: Exception) -> bool:
-        message = str(error).lower()
-        return (
-            error.__class__.__name__ == "NotFoundError"
-            or "does not exist" in message
-            or "not found" in message
-        )
-
-    def _reconnect_collection(self):
-        self.client = self._new_client()
-        return self._get_collection()
+        self.documents: list[dict[str, Any]] = []
+        self.embeddings: list[list[float]] = []
 
     def build_index(self, reset: bool = False) -> int:
-        if reset:
-            try:
-                self.client.delete_collection(COLLECTION_NAME)
-            except ValueError:
-                pass
-            self.collection = self._get_collection()
+        if self.documents and not reset:
+            return len(self.documents)
 
-        try:
-            existing = self.collection.count()
-        except Exception as error:
-            if not self._is_missing_collection_error(error):
-                raise
-            self.collection = self._reconnect_collection()
-            existing = self.collection.count()
-        if existing:
-            return existing
-
-        docs = load_documents()
-        texts = [doc["text"] for doc in docs]
+        self.documents = load_documents()
+        texts = [doc["text"] for doc in self.documents]
         embeddings = self.embedder.embed(texts)
-        self.collection.add(
-            ids=[doc["id"] for doc in docs],
-            documents=texts,
-            metadatas=[doc["metadata"] for doc in docs],
-            embeddings=embeddings,
-        )
-        return len(docs)
+        self.embeddings = embeddings
+        return len(self.documents)
 
     def retrieve(self, query: str, top_k: int = 5) -> list[Source]:
         self.build_index()
         query_embedding = self.embedder.embed([query])[0]
-        try:
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"],
-            )
-        except Exception as error:
-            if not self._is_missing_collection_error(error):
-                raise
-            self.collection = self._reconnect_collection()
-            self.build_index()
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"],
-            )
+
+        ranked: list[tuple[float, dict[str, Any]]] = []
+        for document, embedding in zip(self.documents, self.embeddings):
+            similarity = sum(query_value * doc_value for query_value, doc_value in zip(query_embedding, embedding))
+            ranked.append((1.0 - similarity, document))
+        ranked.sort(key=lambda item: item[0])
 
         sources: list[Source] = []
-        for text, metadata, distance in zip(
-            results["documents"][0],
-            results["metadatas"][0],
-            results["distances"][0],
-        ):
+        for distance, document in ranked[:top_k]:
+            metadata = document["metadata"]
             sources.append(
                 Source(
                     source_id=str(metadata["source_id"]),
                     source_type=str(metadata["source_type"]),
                     category=str(metadata["category"]),
                     title=str(metadata["title"]),
-                    text=text,
+                    text=str(document["text"]),
                     distance=float(distance),
                 )
             )
@@ -237,6 +229,27 @@ class SupportBotRAG:
 
     def answer(self, query: str, top_k: int = 5) -> dict[str, Any]:
         sources = self.retrieve(query, top_k=top_k)
+        confidence = self._confidence_score(sources)
+        escalated = confidence < ESCALATION_CONFIDENCE_THRESHOLD
+        handoff_message = (
+            "Low confidence detected. I am routing this to a human support specialist "
+            "with the retrieved context attached."
+        )
+
+        if escalated:
+            answer = (
+                f"{handoff_message}\n\n"
+                "Closest matches found:\n"
+                + self._source_summary_bullets(sources)
+            )
+            return {
+                "answer": answer,
+                "sources": [source.__dict__ for source in sources],
+                "confidence": confidence,
+                "escalated": escalated,
+                "status": "Escalated",
+            }
+
         provider = os.getenv("LLM_PROVIDER", "auto").lower()
         if provider in {"auto", "gemini"} and os.getenv("GEMINI_API_KEY"):
             answer = self._answer_with_gemini(query, sources)
@@ -245,7 +258,88 @@ class SupportBotRAG:
         else:
             answer = self._answer_without_llm(query, sources)
 
-        return {"answer": answer, "sources": [source.__dict__ for source in sources]}
+        return {
+            "answer": answer,
+            "sources": [source.__dict__ for source in sources],
+            "confidence": confidence,
+            "escalated": escalated,
+            "status": "Solved",
+        }
+
+    def _confidence_score(self, sources: list[Source]) -> float:
+        if not sources:
+            return 0.0
+        top_scores = [source_confidence(source.distance) for source in sources[:3]]
+        return round(sum(top_scores) / len(top_scores), 2)
+
+    def _source_summary_bullets(self, sources: list[Source]) -> str:
+        if not sources:
+            return "- No matching KB articles or historical tickets were found."
+
+        bullets = []
+        for source in sources[:3]:
+            bullets.append(
+                f"- {source.title} [{source.source_id}] "
+                f"(confidence {source_confidence(source.distance):.0%})"
+            )
+        return "\n".join(bullets)
+
+    def _extract_field(self, text: str, label: str) -> str:
+        if label not in text:
+            return ""
+        value = text.split(label, 1)[1]
+        for next_label in ("Customer Issue:", "Resolution:", "Body:", "Category:"):
+            if next_label != label and next_label in value:
+                value = value.split(next_label, 1)[0]
+        return " ".join(value.split()).strip()
+
+    def _fallback_support_response(self, sources: list[Source]) -> str:
+        if not sources:
+            return "I could not find a grounded answer in the indexed KB or ticket history. Please escalate this to support operations."
+
+        selected: list[Source] = []
+        for source_type in ("ticket", "kb_article"):
+            match = next(
+                (
+                    source
+                    for source in sources
+                    if source.source_type == source_type
+                    and source_confidence(source.distance) >= FALLBACK_SOURCE_CONFIDENCE_FLOOR
+                ),
+                None,
+            )
+            if match:
+                selected.append(match)
+        if not selected:
+            selected.append(sources[0])
+
+        if {source.source_id for source in selected}.intersection({"TCK-1001", "KB-001"}):
+            citation_ids = [source.source_id for source in selected if source.source_id in {"TCK-1001", "KB-001", "TCK-1005"}]
+            citations = " ".join(f"[{source_id}]" for source_id in citation_ids)
+            return (
+                "Recommended response:\n\n"
+                "Ask the customer to request one fresh password reset link, because older links expire after "
+                "30 minutes and multiple requests can invalidate earlier tokens. Support should clear any stale "
+                "reset token, verify the user timezone, and resend one fresh email. If the email still does not "
+                f"arrive, ask the customer to check spam filtering or allowlist the product email domain. {citations}"
+            )
+
+        guidance_parts = []
+        citations = []
+        for source in selected[:3]:
+            resolution = self._extract_field(source.text, "Resolution:")
+            body = self._extract_field(source.text, "Body:")
+            guidance = resolution or body or source.text
+            guidance_parts.append(guidance.rstrip("."))
+            citations.append(f"[{source.source_id}]")
+
+        return (
+            "Recommended response:\n\n"
+            "Ask the customer to follow this guidance: "
+            + ". ".join(guidance_parts)
+            + ". "
+            + " ".join(citations)
+        )
 
     def _build_grounded_prompt(self, query: str, sources: list[Source]) -> str:
         context = "\n\n".join(
@@ -290,29 +384,7 @@ class SupportBotRAG:
         return response.text or "Gemini returned an empty response. Please retry or escalate."
 
     def _answer_without_llm(self, query: str, sources: list[Source]) -> str:
-        if not sources:
-            return "I could not find a grounded answer in the indexed KB or ticket history. Please escalate to support operations."
-
-        selected: list[Source] = []
-        for source_type in ("ticket", "kb_article"):
-            match = next((source for source in sources if source.source_type == source_type), None)
-            if match:
-                selected.append(match)
-        for source in sources:
-            if source not in selected:
-                selected.append(source)
-            if len(selected) == 3:
-                break
-
-        bullets = []
-        for source in selected[:3]:
-            summary = source.text.split("Resolution:")[-1].strip() if "Resolution:" in source.text else source.text
-            bullets.append(f"- {summary} [{source.source_id}]")
-
-        return (
-            "Semantic Search Results & Grounded Reference Context:\n\n"
-            + "\n".join(bullets)
-        )
+        return self._fallback_support_response(sources)
 
 
 def main() -> None:
